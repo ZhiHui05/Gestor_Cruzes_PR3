@@ -21,6 +21,6 @@ void loop() {
  Serial.print("Sensor IZQ: ");
  Serial.print(izq);
  Serial.print(" | Sensor DER: ");
- Serial.println(der)
+ Serial.println(der);
  delay(200);
 }

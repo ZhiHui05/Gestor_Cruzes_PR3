@@ -35,23 +35,28 @@ const int VELOCIDAD = 180;
 
 /* ---------- ESTADOS ---------- */
 enum Estado {
-  ESPERANDO_AUTORIZACION,
-  AUTORIZADO,
-  SALIDA,
-  TIMEOUT
+  SEGUIR_LINEA,           // Sigue línea negra
+  PARADO_EN_CRUCE,        // Detectó obstáculo, espera autorización
+  CRUZANDO,               // Recibió autorización, cruza
+  SALIDA                  // Publicó salida, vuelve a SEGUIR_LINEA
 };
 
-Estado estado = ESPERANDO_AUTORIZACION;
-Estado estadoPrev = ESPERANDO_AUTORIZACION;
+Estado estado = SEGUIR_LINEA;
+Estado estadoPrev = SEGUIR_LINEA;
+
+/* ===== Control de timeouts ===== */
+unsigned long tEstado = 0;              // tiempo de entrada al estado actual
+const unsigned long TIMEOUT_CRUZAR_MS = 5000;  // timeout para cruzar
+const unsigned long TIMEOUT_SOLICITUD_MS = 2000; // reintentar solicitud cada 2s
 
 /* ===== Eventos (bitmask) ===== */
 enum Evento : uint32_t {
   EV_NONE = 0,
-  EV_AUTORIZACION = 1u << 0,    // autorización recibida por MQTT
-  EV_OBSTACLE = 1u << 1,        // obstáculo detectado por ultrasonido
-  EV_LINE_LEFT = 1u << 2,       // sensor línea izquierda
-  EV_LINE_RIGHT = 1u << 3,      // sensor línea derecha
-  EV_TIMEOUT = 1u << 4
+  EV_OBSTACLE = 1u << 0,        // obstáculo detectado por ultrasonido
+  EV_LINE_LEFT = 1u << 1,       // sensor línea izquierda
+  EV_LINE_RIGHT = 1u << 2,      // sensor línea derecha
+  EV_AUTORIZACION = 1u << 3,    // autorización recibida por MQTT
+  EV_TIMEOUT = 1u << 4          // timeout esperando autorización/cruzando
 };
 
 volatile uint32_t eventos_callbacks = EV_NONE; // puesto por callbacks (MQTT, interrupciones)
@@ -104,24 +109,23 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   /* ---- MQTT ---- */
-  Serial.print("Conectando a MQTT");
+  Serial.println("Conectando a MQTT");
   mqtt.subscribe(
     "gestor/veh01/autorizacion",
     [](const char* topic, const char* payload) {
-      Serial.printf("[MQTT] %s => %s\n", topic, payload);
-      // Esperamos JSON como: { "autorizacion": true }
+      Serial.printf("[MQTT] Autorización recibida: %s\n", payload);
       if (payload && strstr(payload, "true") != nullptr) {
-        autorizado_flag = true;                // callback sets flag
-        eventos_callbacks |= EV_AUTORIZACION; // mark event for loop
+        autorizado_flag = true;
+        eventos_callbacks |= EV_AUTORIZACION;
+        Serial.println("[eventos] EV_AUTORIZACION marcado");
       }
     }
   );
 
-  enviarSolicitud();
-
-
+  // Iniciar en SEGUIR_LINEA, sin solicitar autorización aún
   digitalWrite(CONTROL_LED_ROJO, HIGH);
   digitalWrite(CONTROL_LED_VERDE, LOW);
+  Serial.println("[SETUP] Iniciando en estado SEGUIR_LINEA");
 
 
 }
@@ -138,7 +142,9 @@ void loop() {
   if (siguiente != estado) {
     estadoPrev = estado;
     estado = siguiente;
-    Serial.printf("[FSM] %d -> %d (ev=0x%08X)\n", (int)estadoPrev, (int)estado, ev);
+    tEstado = millis();  // reinicia timer para el nuevo estado
+    Serial.printf("[FSM] Estado %d -> %d (eventos=0x%02X, tiempo=%lu)\n",
+                  (int)estadoPrev, (int)estado, ev, millis());
   }
 
   // 3) ejecutar acciones del estado
@@ -154,11 +160,10 @@ uint32_t detectarEventos() {
   // Eventos puestos por callbacks MQTT
   if (eventos_callbacks & EV_AUTORIZACION) {
     ev |= EV_AUTORIZACION;
-    // clear the callback event (consumed)
     eventos_callbacks &= ~EV_AUTORIZACION;
   }
 
-  // Leer ultrasonido (solo para detección)
+  // Leer ultrasonido: detecta obstáculos (cruce)
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
@@ -168,7 +173,8 @@ uint32_t detectarEventos() {
   if (duration > 0) {
     float distancia = duration * 0.034 / 2.0;
     last_distancia = distancia;
-    if (distancia < 10.0) {
+    // Obstáculo = cruce detectado
+    if (distancia < 15.0) {  // aumentado a 15cm para detectar mejor el cruce
       ev |= EV_OBSTACLE;
     }
   }
@@ -181,24 +187,47 @@ uint32_t detectarEventos() {
   if (izq) ev |= EV_LINE_LEFT;
   if (der) ev |= EV_LINE_RIGHT;
 
+  // Timeout: si lleva más de TIMEOUT_CRUZAR_MS en CRUZANDO sin volver a línea, error
+  if (estado == CRUZANDO && (millis() - tEstado) >= TIMEOUT_CRUZAR_MS) {
+    ev |= EV_TIMEOUT;
+    Serial.println("[detectarEventos] TIMEOUT cruzando (5s sin completar cruce)");
+  }
+
   return ev;
 }
 
 /* ===== 2) Determinar siguiente estado (función pura) ===== */
 Estado determinarSiguienteEstado(Estado s, uint32_t ev) {
   switch (s) {
-    case ESPERANDO_AUTORIZACION:
-      if (ev & EV_AUTORIZACION) return AUTORIZADO;
-      return ESPERANDO_AUTORIZACION;
-    case AUTORIZADO:
-      // Si hay timeout se podría saltar a TIMEOUT (no implementado explícitamente ahora)
-      if (ev & EV_TIMEOUT) return TIMEOUT;
-      // Obstacle no cambia de estado aquí, lo maneamos en acciones
-      return AUTORIZADO;
+    case SEGUIR_LINEA:
+      // Si detecta obstáculo (cruce), se detiene y espera autorización
+      if (ev & EV_OBSTACLE) {
+        return PARADO_EN_CRUCE;
+      }
+      return SEGUIR_LINEA;
+
+    case PARADO_EN_CRUCE:
+      // Si recibe autorización, comienza a cruzar
+      if (ev & EV_AUTORIZACION) {
+        return CRUZANDO;
+      }
+      return PARADO_EN_CRUCE;
+
+    case CRUZANDO:
+      // Si timeout durante el cruce, regresa a PARADO_EN_CRUCE para reintentar
+      if (ev & EV_TIMEOUT) {
+        return PARADO_EN_CRUCE;
+      }
+      // Si vuelve a detectar línea (EV_LINE_LEFT o EV_LINE_RIGHT después del cruce),
+      // el robot ha llegado al otro lado: publica salida
+      if ((ev & EV_LINE_LEFT) || (ev & EV_LINE_RIGHT)) {
+        return SALIDA;
+      }
+      return CRUZANDO;
+
     case SALIDA:
-      return SALIDA;
-    case TIMEOUT:
-      return TIMEOUT;
+      // Después de publicar salida, vuelve a SEGUIR_LINEA
+      return SEGUIR_LINEA;
   }
   return s;
 }
@@ -206,55 +235,63 @@ Estado determinarSiguienteEstado(Estado s, uint32_t ev) {
 /* ===== 3) Ejecutar estado (efectos sobre HW) ===== */
 void ejecutarEstado(Estado s) {
   switch (s) {
-    case EV_NONE:
-    if (last_izq && last_der) {
-        moverMotores(VELOCIDAD, VELOCIDAD);
+    case SEGUIR_LINEA:
+      // LED VERDE: siguiendo línea normalmente
+      digitalWrite(CONTROL_LED_VERDE, HIGH);
+      digitalWrite(CONTROL_LED_ROJO, LOW);
+
+      // Seguidor de línea: lógica original
+      if (last_izq && last_der) {
+        moverMotores(VELOCIDAD, VELOCIDAD);  // adelante recto
       }
       else if (!last_izq && last_der) {
-        moverMotores(VELOCIDAD, 0);
+        moverMotores(VELOCIDAD, 0);  // gira izquierda
       }
       else if (last_izq && !last_der) {
-        moverMotores(0, VELOCIDAD);
+        moverMotores(0, VELOCIDAD);  // gira derecha
       }
       else {
-        stopMotores();
+        stopMotores();  // no ve línea
       }
-    break;
+      break;
 
-    case ESPERANDO_AUTORIZACION:
-      stopMotores();
+    case PARADO_EN_CRUCE:
+      // LED ROJO: parado en el cruce, esperando autorización
       digitalWrite(CONTROL_LED_ROJO, HIGH);
       digitalWrite(CONTROL_LED_VERDE, LOW);
-      break;
-    case AUTORIZADO:
-      digitalWrite(CONTROL_LED_ROJO, LOW);
-      digitalWrite(CONTROL_LED_VERDE, HIGH);
-      // Si hay obstáculo, detén motores
-      if (last_distancia < 10.0) {
-        Serial.println("Obstáculo detectado (ejecutarEstado)");
-        stopMotores();
-        break;
+      stopMotores();
+      
+      // Envía solicitud UNA SOLA VEZ al entrar en este estado (transición desde SEGUIR_LINEA)
+      if (estadoPrev == SEGUIR_LINEA) {
+        enviarSolicitud();
+        Serial.println("[PARADO_EN_CRUCE] Solicitud enviada al detectar cruce");
       }
+      // Espera autorización del gestor (callback MQTT)
+      break;
 
-      // Seguidor de línea: misma lógica que antes pero usando lecturas almacenadas
-      if (last_izq && last_der) {
-        moverMotores(VELOCIDAD, VELOCIDAD);
-      }
-      else if (!last_izq && last_der) {
-        moverMotores(VELOCIDAD, 0);
-      }
-      else if (last_izq && !last_der) {
-        moverMotores(0, VELOCIDAD);
-      }
-      else {
-        stopMotores();
-      }
+    case CRUZANDO:
+      // LED VERDE: cruzando
+      digitalWrite(CONTROL_LED_VERDE, HIGH);
+      digitalWrite(CONTROL_LED_ROJO, LOW);
+      
+      // Avanza recto (ambos motores a velocidad máxima)
+      moverMotores(VELOCIDAD, VELOCIDAD);
       break;
+
     case SALIDA:
-      // aquí podríamos publicar la salida y continuar misión
-      break;
-    case TIMEOUT:
-      // manejar timeouts/reintentos si procede
+      // LED ROJO: cruce completado, publicar salida
+      digitalWrite(CONTROL_LED_ROJO, HIGH);
+      digitalWrite(CONTROL_LED_VERDE, LOW);
+      stopMotores();
+      
+      // Publica salida (solo una vez al entrar en este estado)
+      if (estadoPrev == CRUZANDO) {
+        String topic = "vehiculo/veh01/salida";
+        String payload = "{\"salida\": true, \"timestamp\": " + String(millis()) + "}";
+        mqtt.publish(topic.c_str(), payload.c_str());
+        Serial.printf("[SALIDA] Publicado en topic %s\n", topic.c_str());
+      }
+      // Transición inmediata a SEGUIR_LINEA en el siguiente loop
       break;
   }
 }
@@ -263,8 +300,9 @@ void ejecutarEstado(Estado s) {
 
 void enviarSolicitud() {
   String topic = "vehiculo/veh01/solicitud";
-  mqtt.publish(topic.c_str(), "{ \"solicitud\": true }");
-  Serial.println("Solicitud enviada");
+  String payload = "{\"solicitud\": true, \"timestamp\": " + String(millis()) + ", \"estado\": \"PARADO_EN_CRUCE\"}";
+  mqtt.publish(topic.c_str(), payload.c_str());
+  Serial.printf("[SOLICITUD] Topic: %s, Payload: %s\n", topic.c_str(), payload.c_str());
 }
 
 

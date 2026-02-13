@@ -36,7 +36,9 @@ const int VELOCIDAD = 180;
 /* ---------- ESTADOS ---------- */
 enum Estado {
   ESPERANDO_AUTORIZACION,
-  AUTORIZADO
+  AUTORIZADO,
+  SALIDA,
+  TIMEOUT
 };
 
 Estado estado = ESPERANDO_AUTORIZACION;

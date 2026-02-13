@@ -137,12 +137,12 @@ void loop() {
           Serial.println("Obstáculo detectado");
           stopMotores();
           break;
-        }c:\Users\VLOZCAR\Documents\Arduino\sketch_feb6d\sketch_feb6d.ino
+        }
       }
 
       /* ---- Sensores de línea ---- */
       int izq = digitalRead(SENSOR_IZQ);
-      int der = digitalReawc:\Users\VLOZCAR\Documents\Arduino\sketch_feb6a\sketch_feb6a.ino:\PR3\arduino\sketch_feb6a\sketch_feb6a.inod(SENSOR_DER);
+      int der = digitalRead(SENSOR_DER);
 
       if (izq && der) {
         moverMotores(VELOCIDAD, VELOCIDAD);

@@ -233,6 +233,14 @@ Estado determinarSiguienteEstado(Estado s, uint32_t ev) {
 }
 
 /* ===== 3) Ejecutar estado (efectos sobre HW) ===== */
+void moverAtras(int vel) {
+  // Retroceso: IN1=0, IN2=vel, IN3=0, IN4=vel
+  ledcWrite(IN1, 0); 
+  ledcWrite(IN2, vel);  
+  ledcWrite(IN3, 0);  
+  ledcWrite(IN4, vel); 
+}
+
 void ejecutarEstado(Estado s) {
   switch (s) {
     case SEGUIR_LINEA:
@@ -240,18 +248,22 @@ void ejecutarEstado(Estado s) {
       digitalWrite(CONTROL_LED_VERDE, HIGH);
       digitalWrite(CONTROL_LED_ROJO, LOW);
 
-      // Seguidor de línea: lógica original
+      // Seguidor de línea: 
+      // Si ambos sensores ven negro (o blanco, segun logica), avanza
       if (last_izq && last_der) {
-        moverMotores(VELOCIDAD, VELOCIDAD);  // adelante recto
+        moverMotores(VELOCIDAD, VELOCIDAD); 
       }
+      // Desvio a la derecha -> corregir girando a izquierda
       else if (!last_izq && last_der) {
-        moverMotores(VELOCIDAD, 0);  // gira izquierda
+        moverMotores(VELOCIDAD, 0); 
       }
+      // Desvio a la izquierda -> corregir girando a derecha
       else if (last_izq && !last_der) {
-        moverMotores(0, VELOCIDAD);  // gira derecha
+        moverMotores(0, VELOCIDAD); 
       }
+      // Ningun sensor detecta linea -> RETROCESO
       else {
-        stopMotores();  // no ve línea
+        moverAtras(VELOCIDAD);
       }
       break;
 

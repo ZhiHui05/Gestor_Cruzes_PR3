@@ -13,7 +13,8 @@ EstadoCruce estado = CRUCE_LIBRE;
 String vehiculoActual = "";
 bool solicitudRecibida = false;
 bool salidaRecibida = false;
-String vehiculoEvento = "";
+String vehiculoSolicitante = "";
+String vehiculoSaliente = "";
 
 unsigned long tOcupado = 0;
 const unsigned long TIMEOUT_CRUCE = 8000;
@@ -38,9 +39,9 @@ void setup() {
 
       String t = topic;
       int i1 = t.indexOf('/');
-      int i2 = t.indexOf('/', i1 + 1);
+      int i2 = t.lastIndexOf('/');
 
-      vehiculoEvento = t.substring(i1 + 1, i2);
+      vehiculoSolicitante = t.substring(i1 + 1, i2);
       solicitudRecibida = true;
     }
   );
@@ -51,9 +52,9 @@ void setup() {
 
       String t = topic;
       int i1 = t.indexOf('/');
-      int i2 = t.indexOf('/', i1 + 1);
+      int i2 = t.lastIndexOf('/');
 
-      vehiculoEvento = t.substring(i1 + 1, i2);
+      vehiculoSaliente = t.substring(i1 + 1, i2);
       salidaRecibida = true;
     }
   );
@@ -72,8 +73,8 @@ void loop() {
 
     case CRUCE_LIBRE:
       if (solicitudRecibida) {
-        vehiculoActual = vehiculoEvento;
         solicitudRecibida = false;
+        vehiculoActual = vehiculoSolicitante;
 
         String topic = "gestor/" + vehiculoActual + "/autorizacion";
         mqtt.publish(topic.c_str(), "{ \"ok\": true }");
@@ -86,12 +87,15 @@ void loop() {
       break;
 
     case CRUCE_OCUPADO:
-      if (salidaRecibida && vehiculoEvento == vehiculoActual) {
+      // Serial.println("Cruce Ocupado");
+      if (salidaRecibida) {
         salidaRecibida = false;
-        vehiculoActual = "";
-        estado = CRUCE_LIBRE;
-
-        Serial.println("Cruce liberado");
+        
+        if (vehiculoSaliente == vehiculoActual) {
+          vehiculoActual = "";
+          estado = CRUCE_LIBRE;
+          Serial.println("Cruce liberado");
+        }
       }
 
       // Timeout de seguridad

@@ -76,6 +76,10 @@ void loop() {
         solicitudRecibida = false;
         vehiculoActual = vehiculoSolicitante;
 
+        Serial.println("Procesando solicitud de: " + vehiculoActual);
+        Serial.println("Esperando 1 segundos antes de autorizar...");
+        delay(1000);
+
         String topic = "gestor/" + vehiculoActual + "/autorizacion";
         mqtt.publish(topic.c_str(), "{ \"ok\": true }");
 

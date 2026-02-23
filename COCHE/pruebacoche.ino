@@ -58,7 +58,7 @@ Estado estadoPrev = SEGUIR_LINEA;
 /* ===== Control de timeouts ===== */
 unsigned long tEstado = 0; // tiempo de entrada al estado actual
 unsigned long tUltimaSolicitud = 0; // tiempo última solicitud enviada
-const unsigned long TIMEOUT_CRUZAR_MS = 5000; // timeout para cruzar
+const unsigned long TIMEOUT_CRUZAR_MS = 2000; // timeout para cruzar
 const unsigned long TIMEOUT_RETROCESO_MS = 2000; // timeout para evitar quedar atrapado
 const unsigned long TIMEOUT_SOLICITUD_MS = 2000; // intervalo para reenviar solicitud
 

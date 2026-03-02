@@ -1,6 +1,5 @@
 #include <WiFi.h>
 #include <PicoMQTT.h>
-#include <ESP32Servo.h>
 
 const char* AP_SSID = "CRUCE_MQTT";
 const char* AP_PASS = "12345678";

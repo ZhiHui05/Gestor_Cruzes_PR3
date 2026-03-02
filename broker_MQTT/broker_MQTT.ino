@@ -1,10 +1,12 @@
 #include <WiFi.h>
 #include <PicoMQTT.h>
+#include <ESP32Servo.h>
 
 const char* AP_SSID = "CRUCE_MQTT";
 const char* AP_PASS = "12345678";
 
 PicoMQTT::Server mqtt;
+
 
 /* ===== Estado del cruce ===== */
 enum EstadoCruce { CRUCE_LIBRE, CRUCE_OCUPADO };
@@ -62,6 +64,7 @@ void setup() {
   // ===== ARRANCAR BROKER =====
   mqtt.begin();
   Serial.println("Broker MQTT iniciado");
+
 }
 
 
@@ -86,6 +89,7 @@ void loop() {
         Serial.println("Autorizado: " + vehiculoActual);
 
         estado = CRUCE_OCUPADO;
+        
         tOcupado = millis();
       }
       break;
@@ -98,6 +102,7 @@ void loop() {
         if (vehiculoSaliente == vehiculoActual) {
           vehiculoActual = "";
           estado = CRUCE_LIBRE;
+          
           Serial.println("Cruce liberado");
         }
       }
@@ -107,6 +112,7 @@ void loop() {
         Serial.println("Timeout -> cruce liberado");
         vehiculoActual = "";
         estado = CRUCE_LIBRE;
+        
       }
       break;
   }

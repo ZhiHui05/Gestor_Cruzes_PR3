@@ -58,7 +58,7 @@ Estado estadoPrev = SEGUIR_LINEA;
 
 /* ===== Control de timeouts ===== */
 unsigned long tEstado = 0;                        // tiempo de entrada al estado actual
-const unsigned long TIMEOUT_CRUZAR_MS = 5000;     // timeout para cruzar
+const unsigned long TIMEOUT_CRUZAR_MS = 4000;     // timeout para cruzar
 const unsigned long TIMEOUT_RETROCESO_MS = 12000;  // timeout para evitar quedar atrapado
 const unsigned long TIMEOUT_SOLICITUD_MS = 2000;  // reintentar solicitud cada 2s
 
@@ -69,7 +69,8 @@ enum Evento : uint32_t {
   EV_LINE_LEFT = 1u << 1,     // sensor línea izquierda
   EV_LINE_RIGHT = 1u << 2,    // sensor línea derecha
   EV_AUTORIZACION = 1u << 3,  // autorización recibida por MQTT
-  EV_TIMEOUT = 1u << 4        // timeout en estado actual
+  EV_TIMEOUT = 1u << 4,        // timeout en estado actual
+  EV_LIBRE = 1u << 5            // cruce libre 
 };
 
 volatile uint32_t eventos_callbacks = EV_NONE;  // puesto por callbacks (MQTT, interrupciones)
@@ -181,8 +182,11 @@ uint32_t detectarEventos() {
   if (duration > 0) {
     float distancia = duration * 0.034 / 2.0;
     last_distancia = distancia;
-    if (distancia < 10.0) {  // Cruce detectado
+    if (distancia < 8.0) {  // Cruce detectado
       ev |= EV_OBSTACLE;
+    }
+    if (distancia > 40.0) {  // Cruce libre
+      ev |= EV_LIBRE;
     }
   }
 
@@ -241,7 +245,7 @@ Estado determinarSiguienteEstado(Estado s, uint32_t ev) {
 
     case CRUZANDO:
       // Timeout durante el cruce
-      if (ev & EV_TIMEOUT) {
+      if ((ev & EV_TIMEOUT) || (ev & EV_LIBRE)) {
         return SALIDA;
       }
       return CRUZANDO;
